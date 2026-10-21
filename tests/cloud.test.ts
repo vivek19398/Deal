@@ -137,3 +137,26 @@ test("online presence uses heartbeats, and replaces untrusted saved identity fie
   assert.equal(g.players[0].token, "");
   assert.equal(g.owner, "a");
 });
+
+test("database permission errors explain the backend key and hide private database details", async () => {
+  const { SupabaseGameDatabase } = await import("../server/cloud.js");
+  const client = {
+    rpc: async () => ({
+      data: null,
+      error: {
+        code: "42501",
+        message:
+          "permission denied for function dealz_enter_room: PRIVATE_VALUE",
+      },
+    }),
+  };
+  const db = new SupabaseGameDatabase(
+    client as unknown as import("@supabase/supabase-js").SupabaseClient,
+  );
+  await assert.rejects(
+    db.enter("guest-a", { action: "enter", create: true, name: "Patna" }),
+    (error: Error) =>
+      error.message.includes("SUPABASE_SECRET_KEY") &&
+      !error.message.includes("PRIVATE_VALUE"),
+  );
+});

@@ -36,7 +36,28 @@ export interface CloudDatabase {
     state: Game,
   ): Promise<{ left?: boolean }>;
 }
-function databaseError(message: string): never {
+function databaseError(
+  error: { message: string; code?: string },
+  operation: string,
+): never {
+  const { message, code } = error;
+  // Log identifiers only: database details may contain private game data.
+  console.error(
+    "[dealz database]",
+    JSON.stringify({ operation, code: code || "UNKNOWN" }),
+  );
+  if (code === "42501" || /permission denied|row-level security/i.test(message))
+    throw new CloudError(
+      "Database access denied. In Vercel, SUPABASE_SECRET_KEY must be the Supabase secret or service_role key, not the publishable or anon key. Verify both SQL migrations were run, then redeploy.",
+      503,
+      "DATABASE_PERMISSION_DENIED",
+    );
+  if (/Invalid API key|Invalid authentication credentials/i.test(message))
+    throw new CloudError(
+      "The backend Supabase key is invalid. Check SUPABASE_SECRET_KEY and SUPABASE_URL in Vercel, then redeploy.",
+      503,
+      "DATABASE_AUTH_ERROR",
+    );
   if (/Stale game version/.test(message))
     throw new CloudError(
       "The table changed. Please try again.",
@@ -63,7 +84,7 @@ function databaseError(message: string): never {
       "SETUP_REQUIRED",
     );
   throw new CloudError(
-    "Could not save the game. Please try again.",
+    `Could not save the game (database code: ${/^[A-Z0-9]{5,12}$/.test(code || "") ? code : "UNKNOWN"}). Check Vercel Logs for the failed database operation.`,
     503,
     "DATABASE_ERROR",
   );
@@ -81,7 +102,7 @@ export class SupabaseGameDatabase implements CloudDatabase {
       p_create: !!input.create,
       p_restore: !!input.playerId,
     });
-    if (error) databaseError(error.message);
+    if (error) databaseError(error, "enter_room");
     return data as Session;
   }
   async snapshot(code: string, userId: string, touch: boolean) {
@@ -90,7 +111,7 @@ export class SupabaseGameDatabase implements CloudDatabase {
       p_user_id: userId,
       p_touch: touch,
     });
-    if (error) databaseError(error.message);
+    if (error) databaseError(error, "room_snapshot");
     return data as OnlineSnapshot | null;
   }
   async processed(roomId: string, memberId: string, id: string) {
@@ -101,7 +122,7 @@ export class SupabaseGameDatabase implements CloudDatabase {
       .eq("member_id", memberId)
       .eq("command_id", id)
       .maybeSingle();
-    if (error) databaseError(error.message);
+    if (error) databaseError(error, "processed_command");
     return !!data;
   }
   async commit(
@@ -118,7 +139,7 @@ export class SupabaseGameDatabase implements CloudDatabase {
       p_expected_version: version,
       p_state: state,
     });
-    if (error) databaseError(error.message);
+    if (error) databaseError(error, "commit_move");
     return data as { left?: boolean };
   }
 }
